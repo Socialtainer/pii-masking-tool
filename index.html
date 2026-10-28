@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="텍스트와 엑셀 파일의 개인정보를 브라우저에서만 안전하게 마스킹하는 도구">
+  <title>개인정보 자동 마스킹</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: { 950: '#081225', 900: '#0b1930', 800: '#112442' },
+            brand: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
+          },
+          boxShadow: { soft: '0 18px 55px rgba(15, 23, 42, 0.10)' }
+        }
+      }
+    };
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .tab-active { color: #4338ca; border-color: #4f46e5; background: #eef2ff; }
+    .tab-inactive { color: #64748b; border-color: transparent; }
+    .drop-active { border-color: #4f46e5 !important; background: #eef2ff !important; transform: translateY(-2px); }
+    .toggle-input:checked + span { background: #4f46e5; border-color: #4f46e5; }
+    .toggle-input:checked + span svg { opacity: 1; transform: scale(1); }
+    .scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 antialiased">
+  <header class="relative overflow-hidden bg-navy-950 text-white">
+    <div class="absolute inset-0 opacity-40" aria-hidden="true" style="background: radial-gradient(circle at 15% 0%, #4338ca 0, transparent 36%), radial-gradient(circle at 90% 120%, #1d4ed8 0, transparent 30%);"></div>
+    <div class="relative mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
+      <div class="flex flex-col gap-7 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div class="mb-4 flex items-center gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/20">
+              <svg class="h-6 w-6 text-indigo-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3 4.5 6v5.5c0 4.8 3.2 8.3 7.5 9.5 4.3-1.2 7.5-4.7 7.5-9.5V6L12 3Z"/><path d="m9 12 2 2 4-4"/></svg>
+            </div>
+            <span class="text-sm font-semibold tracking-wide text-indigo-200">PII SAFE TOOL</span>
+          </div>
+          <h1 class="text-3xl font-extrabold tracking-tight sm:text-4xl">개인정보 자동 마스킹</h1>
+          <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">민원 텍스트와 엑셀 속 개인정보를 빠르게 탐지해 안전한 형태로 변환하세요.</p>
+        </div>
+        <div class="max-w-xl rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4 backdrop-blur-sm" role="status" aria-label="보안 처리 안내">
+          <div class="flex items-start gap-3">
+            <div class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-400/20">
+              <svg class="h-4 w-4 text-emerald-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+            </div>
+            <div>
+              <p class="font-bold text-emerald-200">100% 브라우저 내 안전 처리</p>
+              <p class="mt-1 text-xs leading-5 text-emerald-50/80 sm:text-sm">입력한 텍스트와 파일은 외부 서버로 전송되지 않으며, 현재 브라우저 메모리에서만 처리됩니다.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+    <div class="grid gap-6 lg:grid-cols-[300px,minmax(0,1fr)]">
+      <aside class="h-fit rounded-3xl border border-slate-200 bg-white p-5 shadow-soft lg:sticky lg:top-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-indigo-600">Masking rules</p>
+            <h2 class="mt-1 text-lg font-extrabold text-slate-900">마스킹 규칙</h2>
+          </div>
+          <button id="toggleAll" type="button" class="rounded-lg px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-indigo-500">전체 해제</button>
+        </div>
+        <p class="mt-2 text-sm leading-5 text-slate-500">적용할 개인정보 유형을 선택하세요.</p>
+        <div class="mt-5 space-y-3" id="ruleList">
+          <label class="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 p-3 transition hover:border-indigo-200 hover:bg-indigo-50/50">
+            <input class="toggle-input peer sr-only rule-checkbox" type="checkbox" data-rule="rrn" checked>
+            <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white transition"><svg class="h-3.5 w-3.5 scale-75 text-white opacity-0 transition" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-8 8a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L8 12.6l7.3-7.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg></span>
+            <span><span class="block text-sm font-bold text-slate-800">주민등록번호</span><span class="mt-0.5 block text-xs text-slate-500">900101-1******</span></span>
+          </label>
+          <label class="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 p-3 transition hover:border-indigo-200 hover:bg-indigo-50/50">
+            <input class="toggle-input peer sr-only rule-checkbox" type="checkbox" data-rule="phone" checked>
+            <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white transition"><svg class="h-3.5 w-3.5 scale-75 text-white opacity-0 transition" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-8 8a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L8 12.6l7.3-7.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg></span>
+            <span><span class="block text-sm font-bold text-slate-800">휴대전화번호</span><span class="mt-0.5 block text-xs text-slate-500">010-****-5678</span></span>
+          </label>
+          <label class="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 p-3 transition hover:border-indigo-200 hover:bg-indigo-50/50">
+            <input class="toggle-input peer sr-only rule-checkbox" type="checkbox" data-rule="email" checked>
+            <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white transition"><svg class="h-3.5 w-3.5 scale-75 text-white opacity-0 transition" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-8 8a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L8 12.6l7.3-7.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg></span>
+            <span><span class="block text-sm font-bold text-slate-800">이메일</span><span class="mt-0.5 block text-xs text-slate-500">ad***@kisa.or.kr</span></span>
+          </label>
+          <label class="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 p-3 transition hover:border-indigo-200 hover:bg-indigo-50/50">
+            <input class="toggle-input peer sr-only rule-checkbox" type="checkbox" data-rule="finance" checked>
+            <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-300 bg-white transition"><svg class="h-3.5 w-3.5 scale-75 text-white opacity-0 transition" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-8 8a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L8 12.6l7.3-7.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg></span>
+            <span><span class="block text-sm font-bold text-slate-800">계좌·카드번호</span><span class="mt-0.5 block text-xs text-slate-500">앞·뒤 4자리만 유지</span></span>
+          </label>
+        </div>
+        <div class="mt-5 rounded-2xl bg-slate-50 p-4">
+          <div class="flex gap-2 text-xs leading-5 text-slate-500">
+            <svg class="mt-0.5 h-4 w-4 shrink-0 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+            <p>정규식 기반 자동 탐지입니다. 결과를 다운로드하기 전에 미리보기를 확인하세요.</p>
+          </div>
+        </div>
+      </aside>
+
+      <section class="min-w-0 rounded-3xl border border-slate-200 bg-white shadow-soft">
+        <div class="border-b border-slate-200 p-2 sm:p-3">
+          <div class="grid grid-cols-2 gap-2" role="tablist" aria-label="마스킹 모드">
+            <button id="textTab" type="button" role="tab" aria-selected="true" aria-controls="textPanel" class="tab-active flex items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-sm font-bold transition focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 4h14M5 9h14M5 14h9M5 19h7"/></svg>텍스트 마스킹
+            </button>
+            <button id="excelTab" type="button" role="tab" aria-selected="false" aria-controls="excelPanel" class="tab-inactive flex items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-sm font-bold transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 3h10l4 4v14H5V3Z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>엑셀 파일 마스킹
+            </button>
+          </div>
+        </div>
+
+        <div id="alertBox" class="mx-5 mt-5 hidden rounded-2xl border p-4 text-sm" role="alert"></div>
+
+        <div id="textPanel" role="tabpanel" aria-labelledby="textTab" class="p-5 sm:p-7">
+          <div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div><h2 class="text-xl font-extrabold text-slate-900">텍스트 실시간 마스킹</h2><p class="mt-1 text-sm text-slate-500">민원 내용, 상담 기록, 로그 등을 붙여넣으세요.</p></div>
+            <button id="loadSample" type="button" class="w-fit text-sm font-semibold text-indigo-600 hover:text-indigo-800">예시 데이터 불러오기</button>
+          </div>
+          <div class="grid gap-5 xl:grid-cols-2">
+            <div>
+              <div class="mb-2 flex items-center justify-between"><label for="sourceText" class="text-sm font-bold text-slate-700">원본 텍스트</label><span id="sourceCount" class="text-xs text-slate-400">0자</span></div>
+              <textarea id="sourceText" rows="14" spellcheck="false" class="scrollbar w-full resize-y rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 outline-none transition placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-100" placeholder="마스킹할 텍스트를 입력하거나 붙여넣으세요.&#10;&#10;예) 홍길동 / 900101-1234567 / 010-1234-5678"></textarea>
+            </div>
+            <div>
+              <div class="mb-2 flex items-center justify-between"><label for="maskedText" class="text-sm font-bold text-slate-700">마스킹 결과</label><span id="matchCount" class="rounded-full bg-indigo-50 px-2 py-1 text-xs font-bold text-indigo-600">탐지 0건</span></div>
+              <textarea id="maskedText" rows="14" readonly class="scrollbar w-full resize-y rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 text-sm leading-6 text-slate-700 outline-none" placeholder="마스킹 결과가 여기에 표시됩니다."></textarea>
+            </div>
+          </div>
+          <div class="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <button id="clearText" type="button" class="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-500 hover:bg-slate-100">내용 지우기</button>
+            <button id="copyText" type="button" disabled class="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:shadow-none">
+              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg><span>마스킹 결과 복사</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="excelPanel" role="tabpanel" aria-labelledby="excelTab" class="hidden p-5 sm:p-7">
+          <div class="mb-5"><h2 class="text-xl font-extrabold text-slate-900">엑셀 파일 마스킹</h2><p class="mt-1 text-sm text-slate-500">.xlsx 또는 .csv 파일의 모든 시트를 브라우저에서 처리합니다.</p></div>
+          <div id="dropZone" tabindex="0" role="button" aria-label="엑셀 또는 CSV 파일 선택" class="group cursor-pointer rounded-3xl border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center transition hover:border-indigo-400 hover:bg-indigo-50/50 focus:outline-none focus:ring-4 focus:ring-indigo-100">
+            <input id="fileInput" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" class="hidden">
+            <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm ring-1 ring-slate-200 transition group-hover:-translate-y-1">
+              <svg class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M5 14v5h14v-5"/></svg>
+            </div>
+            <p class="mt-4 font-extrabold text-slate-800">파일을 이곳에 끌어다 놓으세요</p>
+            <p class="mt-1 text-sm text-slate-500">또는 클릭하여 파일 선택 · XLSX, CSV · 최대 30MB</p>
+          </div>
+
+          <div id="fileSummary" class="mt-5 hidden rounded-2xl border border-slate-200 bg-white p-4">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div class="flex min-w-0 items-center gap-3">
+                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600"><svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 3h10l4 4v14H5V3Z"/><path d="M8 12h8M8 16h8"/></svg></div>
+                <div class="min-w-0"><p id="fileName" class="truncate text-sm font-extrabold text-slate-800"></p><p id="fileMeta" class="mt-0.5 text-xs text-slate-500"></p></div>
+              </div>
+              <button id="resetFile" type="button" class="shrink-0 rounded-lg px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50">다른 파일 선택</button>
+            </div>
+          </div>
+
+          <div id="previewSection" class="mt-7 hidden">
+            <div class="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div><h3 class="font-extrabold text-slate-900">변환 결과 미리보기</h3><p id="previewCaption" class="mt-1 text-xs text-slate-500">첫 번째 시트의 처음 5개 행을 표시합니다.</p></div>
+              <span id="excelMatchCount" class="w-fit rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700"></span>
+            </div>
+            <div class="scrollbar overflow-x-auto rounded-2xl border border-slate-200">
+              <table class="w-full min-w-[720px] table-fixed text-left text-sm">
+                <thead class="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th class="w-16 px-4 py-3">행</th><th class="px-4 py-3">원본</th><th class="px-4 py-3 text-indigo-700">마스킹 결과</th></tr></thead>
+                <tbody id="previewBody" class="divide-y divide-slate-100"></tbody>
+              </table>
+            </div>
+            <button id="downloadFile" type="button" class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-3.5 text-sm font-extrabold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 sm:w-auto">
+              <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 4v12m0 0 5-5m-5 5-5-5M5 20h14"/></svg>마스킹 엑셀 다운로드
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="mt-6 flex flex-col items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-xs text-slate-500 sm:flex-row">
+      <p class="flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-emerald-500"></span>서버 업로드 없음 · 브라우저 탭을 닫으면 입력 데이터는 사라집니다.</p>
+      <p>정규식 탐지 결과는 반드시 담당자가 최종 검토해 주세요.</p>
+    </div>
+  </main>
+
+  <div id="toast" class="pointer-events-none fixed bottom-5 left-1/2 z-50 -translate-x-1/2 translate-y-4 rounded-xl bg-slate-900 px-4 py-3 text-sm font-bold text-white opacity-0 shadow-2xl transition duration-200" role="status" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const state = { workbook: null, originalFileName: '', totalMatches: 0 };
+      const $ = (id) => document.getElementById(id);
+      const ruleCheckboxes = [...document.querySelectorAll('.rule-checkbox')];
+
+      function getRules() {
+        return Object.fromEntries(ruleCheckboxes.map((el) => [el.dataset.rule, el.checked]));
+      }
+
+      function maskText(value) {
+        let text = String(value ?? '');
+        let matches = 0;
+        const rules = getRules();
+
+        if (rules.rrn) {
+          text = text.replace(/\b(\d{6})[- ]?([1-8])(\d{6})\b/g, (_, birth, gender) => {
+            matches += 1;
+            return `${birth}-${gender}******`;
+          });
+        }
+        if (rules.phone) {
+          text = text.replace(/\b(01[016789])[- .]?(\d{3,4})[- .]?(\d{4})\b/g, (_, prefix, middle, last) => {
+            matches += 1;
+            return `${prefix}-${'*'.repeat(middle.length)}-${last}`;
+          });
+        }
+        if (rules.email) {
+          text = text.replace(/\b([A-Z0-9._%+-]+)@([A-Z0-9.-]+\.[A-Z]{2,})\b/gi, (_, local, domain) => {
+            matches += 1;
+            const visible = local.slice(0, Math.min(2, local.length));
+            return `${visible}${'*'.repeat(Math.max(3, local.length - visible.length))}@${domain}`;
+          });
+        }
+        if (rules.finance) {
+          text = text.replace(/(?<!\d)(\d{12,16})(?!\d)/g, (number) => {
+            matches += 1;
+            return `${number.slice(0, 4)}${'*'.repeat(number.length - 8)}${number.slice(-4)}`;
+          });
+        }
+        return { text, matches };
+      }
+
+      function updateTextResult() {
+        const source = $('sourceText').value;
+        const result = maskText(source);
+        $('maskedText').value = result.text;
+        $('sourceCount').textContent = `${source.length.toLocaleString('ko-KR')}자`;
+        $('matchCount').textContent = `탐지 ${result.matches.toLocaleString('ko-KR')}건`;
+        $('copyText').disabled = !source;
+      }
+
+      function showToast(message) {
+        const toast = $('toast');
+        toast.textContent = message;
+        toast.classList.remove('opacity-0', 'translate-y-4');
+        clearTimeout(showToast.timer);
+        showToast.timer = setTimeout(() => toast.classList.add('opacity-0', 'translate-y-4'), 1800);
+      }
+
+      function showAlert(message, type = 'error') {
+        const box = $('alertBox');
+        const styles = type === 'error'
+          ? 'border-rose-200 bg-rose-50 text-rose-700'
+          : 'border-amber-200 bg-amber-50 text-amber-700';
+        box.className = `mx-5 mt-5 rounded-2xl border p-4 text-sm ${styles}`;
+        box.textContent = message;
+      }
+
+      function clearAlert() {
+        $('alertBox').className = 'mx-5 mt-5 hidden rounded-2xl border p-4 text-sm';
+        $('alertBox').textContent = '';
+      }
+
+      function switchTab(mode) {
+        const isText = mode === 'text';
+        $('textPanel').classList.toggle('hidden', !isText);
+        $('excelPanel').classList.toggle('hidden', isText);
+        $('textTab').className = `${isText ? 'tab-active' : 'tab-inactive'} flex items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-sm font-bold transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500`;
+        $('excelTab').className = `${!isText ? 'tab-active' : 'tab-inactive'} flex items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-sm font-bold transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-500`;
+        $('textTab').setAttribute('aria-selected', String(isText));
+        $('excelTab').setAttribute('aria-selected', String(!isText));
+        clearAlert();
+      }
+
+      async function copyResult() {
+        const text = $('maskedText').value;
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch (_) {
+          $('maskedText').select();
+          document.execCommand('copy');
+          window.getSelection()?.removeAllRanges();
+        }
+        showToast('마스킹 결과를 복사했습니다.');
+      }
+
+      function formatFileSize(bytes) {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+      }
+
+      function resetFile() {
+        state.workbook = null;
+        state.originalFileName = '';
+        state.totalMatches = 0;
+        $('fileInput').value = '';
+        $('fileSummary').classList.add('hidden');
+        $('previewSection').classList.add('hidden');
+        $('previewBody').replaceChildren();
+        clearAlert();
+      }
+
+      function cellDisplay(value) {
+        if (value === null || value === undefined || value === '') return '—';
+        return String(value);
+      }
+
+      function rowDisplay(row) {
+        if (!row.length) return '—';
+        return row.map((value, index) => `${XLSX.utils.encode_col(index)}: ${cellDisplay(value)}`).join('  ·  ');
+      }
+
+      function renderPreview(originalRows, maskedRows, sheetName) {
+        const body = $('previewBody');
+        body.replaceChildren();
+        const rowCount = Math.max(originalRows.length, maskedRows.length, 1);
+        for (let index = 0; index < rowCount; index += 1) {
+          const tr = document.createElement('tr');
+          const no = document.createElement('td');
+          const original = document.createElement('td');
+          const masked = document.createElement('td');
+          no.className = 'px-4 py-3 align-top font-bold text-slate-400';
+          original.className = 'break-words px-4 py-3 align-top leading-6 text-slate-600';
+          masked.className = 'break-words bg-indigo-50/30 px-4 py-3 align-top font-medium leading-6 text-slate-800';
+          no.textContent = String(index + 1);
+          original.textContent = rowDisplay(originalRows[index] || []);
+          masked.textContent = rowDisplay(maskedRows[index] || []);
+          tr.append(no, original, masked);
+          body.appendChild(tr);
+        }
+        $('previewCaption').textContent = `“${sheetName}” 시트의 처음 ${Math.min(rowCount, 5)}개 행을 표시합니다.`;
+      }
+
+      async function processFile(file) {
+        clearAlert();
+        resetFile();
+        if (!file) return;
+        const extension = file.name.split('.').pop()?.toLowerCase();
+        if (!['xlsx', 'csv'].includes(extension)) {
+          showAlert('지원하지 않는 파일 형식입니다. .xlsx 또는 .csv 파일을 선택해 주세요.');
+          return;
+        }
+        if (file.size > 30 * 1024 * 1024) {
+          showAlert('파일 크기가 30MB를 초과합니다. 더 작은 파일로 다시 시도해 주세요.');
+          return;
+        }
+        if (typeof XLSX === 'undefined') {
+          showAlert('엑셀 처리 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침해 주세요.');
+          return;
+        }
+
+        try {
+          $('dropZone').classList.add('opacity-60', 'pointer-events-none');
+          const input = extension === 'csv' ? await file.text() : await file.arrayBuffer();
+          const readOptions = extension === 'csv'
+            ? { type: 'string', cellDates: true }
+            : { type: 'array', cellDates: true };
+          const originalWorkbook = XLSX.read(input, readOptions);
+          const maskedWorkbook = XLSX.read(input, readOptions);
+          let totalMatches = 0;
+
+          maskedWorkbook.SheetNames.forEach((sheetName) => {
+            const sheet = maskedWorkbook.Sheets[sheetName];
+            Object.keys(sheet).forEach((address) => {
+              if (address.startsWith('!')) return;
+              const cell = sheet[address];
+              const isLongInteger = typeof cell.v === 'number' && Number.isInteger(cell.v) && String(cell.v).length >= 12 && String(cell.v).length <= 16;
+              if (typeof cell.v !== 'string' && !isLongInteger) return;
+              const result = maskText(cell.v);
+              if (result.matches > 0) {
+                cell.v = result.text;
+                cell.t = 's';
+                delete cell.w;
+                delete cell.f;
+                totalMatches += result.matches;
+              }
+            });
+          });
+
+          const firstSheetName = originalWorkbook.SheetNames[0];
+          if (!firstSheetName) throw new Error('empty-workbook');
+          const originalRows = XLSX.utils.sheet_to_json(originalWorkbook.Sheets[firstSheetName], { header: 1, defval: '', raw: false }).slice(0, 5);
+          const maskedRows = XLSX.utils.sheet_to_json(maskedWorkbook.Sheets[firstSheetName], { header: 1, defval: '', raw: false }).slice(0, 5);
+
+          state.workbook = maskedWorkbook;
+          state.originalFileName = file.name;
+          state.totalMatches = totalMatches;
+          $('fileName').textContent = file.name;
+          $('fileMeta').textContent = `${formatFileSize(file.size)} · ${maskedWorkbook.SheetNames.length.toLocaleString('ko-KR')}개 시트`;
+          $('excelMatchCount').textContent = `총 ${totalMatches.toLocaleString('ko-KR')}건 마스킹`;
+          $('fileSummary').classList.remove('hidden');
+          $('previewSection').classList.remove('hidden');
+          renderPreview(originalRows, maskedRows, firstSheetName);
+          showToast('파일 마스킹이 완료되었습니다.');
+        } catch (error) {
+          console.error(error);
+          resetFile();
+          showAlert('파일을 읽을 수 없습니다. 손상되지 않은 .xlsx 또는 .csv 파일인지 확인해 주세요.');
+        } finally {
+          $('dropZone').classList.remove('opacity-60', 'pointer-events-none');
+        }
+      }
+
+      function downloadWorkbook() {
+        if (!state.workbook) return;
+        const baseName = state.originalFileName.replace(/\.(xlsx|csv)$/i, '');
+        XLSX.writeFile(state.workbook, `${baseName}_masked.xlsx`, { compression: true });
+        showToast('마스킹된 엑셀 파일을 생성했습니다.');
+      }
+
+      $('textTab').addEventListener('click', () => switchTab('text'));
+      $('excelTab').addEventListener('click', () => switchTab('excel'));
+      $('sourceText').addEventListener('input', updateTextResult);
+      $('copyText').addEventListener('click', copyResult);
+      $('clearText').addEventListener('click', () => { $('sourceText').value = ''; updateTextResult(); $('sourceText').focus(); });
+      $('loadSample').addEventListener('click', () => {
+        $('sourceText').value = '민원인 홍길동(900101-1234567)님의 연락처는 010-1234-5678입니다.\n회신 이메일: admin@kisa.or.kr\n결제 카드번호: 1234567812345678';
+        updateTextResult();
+      });
+      $('toggleAll').addEventListener('click', () => {
+        const shouldCheck = ruleCheckboxes.some((checkbox) => !checkbox.checked);
+        ruleCheckboxes.forEach((checkbox) => { checkbox.checked = shouldCheck; });
+        $('toggleAll').textContent = shouldCheck ? '전체 해제' : '전체 선택';
+        updateTextResult();
+        if (state.originalFileName) showAlert('규칙을 변경했습니다. 엑셀 파일에는 다시 업로드해야 변경된 규칙이 적용됩니다.', 'warning');
+      });
+      ruleCheckboxes.forEach((checkbox) => checkbox.addEventListener('change', () => {
+        $('toggleAll').textContent = ruleCheckboxes.every((item) => item.checked) ? '전체 해제' : '전체 선택';
+        updateTextResult();
+        if (state.originalFileName) showAlert('규칙을 변경했습니다. 엑셀 파일에는 다시 업로드해야 변경된 규칙이 적용됩니다.', 'warning');
+      }));
+
+      const dropZone = $('dropZone');
+      dropZone.addEventListener('click', () => $('fileInput').click());
+      dropZone.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); $('fileInput').click(); } });
+      ['dragenter', 'dragover'].forEach((eventName) => dropZone.addEventListener(eventName, (event) => { event.preventDefault(); dropZone.classList.add('drop-active'); }));
+      ['dragleave', 'drop'].forEach((eventName) => dropZone.addEventListener(eventName, (event) => { event.preventDefault(); dropZone.classList.remove('drop-active'); }));
+      dropZone.addEventListener('drop', (event) => processFile(event.dataTransfer.files[0]));
+      $('fileInput').addEventListener('change', (event) => processFile(event.target.files[0]));
+      $('resetFile').addEventListener('click', resetFile);
+      $('downloadFile').addEventListener('click', downloadWorkbook);
+      updateTextResult();
+    })();
+  </script>
+</body>
+</html>
