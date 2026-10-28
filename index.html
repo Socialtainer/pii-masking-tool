@@ -188,7 +188,7 @@
 
     <div class="mt-6 flex flex-col items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-5 py-4 text-xs text-slate-500 sm:flex-row">
       <p class="flex items-center gap-2"><span class="h-2 w-2 rounded-full bg-emerald-500"></span>서버 업로드 없음 · 브라우저 탭을 닫으면 입력 데이터는 사라집니다.</p>
-      <p>정규식 탐지 결과는 반드시 담당자가 최종 검토해 주세요.</p>
+      <p>v1.1 · 주소 탐지 강화 · 정규식 결과는 담당자가 최종 검토해 주세요.</p>
     </div>
   </main>
 
@@ -204,6 +204,30 @@
 
       function getRules() {
         return Object.fromEntries(ruleCheckboxes.map((el) => [el.dataset.rule, el.checked]));
+      }
+
+      function maskAddressText(value, force = false) {
+        const source = String(value ?? '');
+        let matches = 0;
+        const region = '(?:서울(?:특별시|시)?|부산(?:광역시|시)?|대구(?:광역시|시)?|인천(?:광역시|시)?|광주(?:광역시|시)?|대전(?:광역시|시)?|울산(?:광역시|시)?|세종(?:특별자치시|시)?|경기(?:도)?|강원(?:특별자치도|도)?|충청북도|충북|충청남도|충남|전북특별자치도|전라북도|전북|전라남도|전남|경상북도|경북|경상남도|경남|제주특별자치도|제주도)';
+        const addressPattern = new RegExp(`(?:\\(?\\d{5}\\)?[ \\t]*)?((?:${region}[ \\t]+)?(?:[가-힣]+(?:시|군|구)[ \\t]+){1,2})[가-힣A-Za-z0-9·.-]+(?:대로|로|길|동|읍|면|리)[ \\t]*\\d+(?:-\\d+)?(?:[ \\t]*,?[ \\t]*[가-힣A-Za-z0-9().-]+(?:동|호|층))*`, 'g');
+        const masked = source.replace(addressPattern, (_, administrativeArea) => {
+          matches += 1;
+          return `${administrativeArea.trim()} ***`;
+        });
+
+        if (matches > 0 || !force || !source.trim()) return { text: masked, matches };
+
+        const withoutPostalCode = source.trim().replace(/^\(?\d{5}\)?[ \\t]*/, '');
+        const tokens = withoutPostalCode.split(/[ \\t]+/).filter(Boolean);
+        let lastAdministrativeIndex = -1;
+        tokens.slice(0, 4).forEach((token, index) => {
+          if (/(?:시|군|구)$/.test(token)) lastAdministrativeIndex = index;
+        });
+        const visibleArea = lastAdministrativeIndex >= 0
+          ? tokens.slice(0, lastAdministrativeIndex + 1).join(' ')
+          : '';
+        return { text: visibleArea ? `${visibleArea} ***` : '***', matches: 1 };
       }
 
       function maskText(value) {
@@ -231,11 +255,9 @@
           });
         }
         if (rules.address) {
-          const addressPattern = /((?:서울특별시|부산광역시|대구광역시|인천광역시|광주광역시|대전광역시|울산광역시|세종특별자치시|경기도|강원특별자치도|강원도|충청북도|충청남도|전북특별자치도|전라북도|전라남도|경상북도|경상남도|제주특별자치도)\s+(?:[가-힣]+(?:시|군|구)\s+){1,2})([가-힣0-9·.-]+(?:대로|로|길|동|읍|면|리)\s+\d+(?:-\d+)?(?:\s*,?\s*[가-힣0-9-]+(?:동|호|층))*)/g;
-          text = text.replace(addressPattern, (_, region) => {
-            matches += 1;
-            return `${region.trim()} ***`;
-          });
+          const addressResult = maskAddressText(text);
+          text = addressResult.text;
+          matches += addressResult.matches;
         }
         if (rules.finance) {
           text = text.replace(/(?<!\d)(\d{12,16})(?!\d)/g, (number) => {
@@ -379,12 +401,29 @@
 
           maskedWorkbook.SheetNames.forEach((sheetName) => {
             const sheet = maskedWorkbook.Sheets[sheetName];
+            const rules = getRules();
+            const range = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']) : null;
+            const addressColumns = new Set();
+            if (rules.address && range) {
+              for (let column = range.s.c; column <= range.e.c; column += 1) {
+                const headerCell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c: column })];
+                if (headerCell && /주소|거주지|소재지/.test(String(headerCell.v ?? ''))) {
+                  addressColumns.add(column);
+                }
+              }
+            }
             Object.keys(sheet).forEach((address) => {
               if (address.startsWith('!')) return;
               const cell = sheet[address];
               const isLongInteger = typeof cell.v === 'number' && Number.isInteger(cell.v) && String(cell.v).length >= 12 && String(cell.v).length <= 16;
               if (typeof cell.v !== 'string' && !isLongInteger) return;
-              const result = maskText(cell.v);
+              const position = XLSX.utils.decode_cell(address);
+              const shouldForceAddress = rules.address && range && position.r > range.s.r && addressColumns.has(position.c) && typeof cell.v === 'string';
+              const addressResult = shouldForceAddress
+                ? maskAddressText(cell.v, true)
+                : { text: String(cell.v), matches: 0 };
+              const result = maskText(addressResult.text);
+              result.matches += addressResult.matches;
               if (result.matches > 0) {
                 cell.v = result.text;
                 cell.t = 's';
